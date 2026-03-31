@@ -1,0 +1,15 @@
+[project]
+name = "scache"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "psycopg2-binary>=2.9.9",
+    "requests>=2.31.0",
+    "databricks-sdk>=0.20.0",
+]
+
+[[tool.uv.index]]
+url = "https://pypi-proxy.dev.databricks.com/simple"
+default = true
