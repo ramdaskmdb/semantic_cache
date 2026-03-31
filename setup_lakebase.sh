@@ -48,7 +48,6 @@ PGPASSWORD=$TOKEN psql "host=$HOST port=5432 dbname=postgres user=$EMAIL sslmode
   -c "CREATE DATABASE $DATABASE_NAME;"
 
 
-
 # Step 4: Enable pgvector extension
 echo "Enabling pgvector extension..."
 PGPASSWORD=$TOKEN psql "host=$HOST port=5432 dbname=$DATABASE_NAME user=$EMAIL sslmode=require" \
@@ -57,7 +56,7 @@ PGPASSWORD=$TOKEN psql "host=$HOST port=5432 dbname=$DATABASE_NAME user=$EMAIL s
 # Step 5: Create semantic cache table
 echo "Creating semantic cache table..."
 PGPASSWORD=$TOKEN psql "host=$HOST port=5432 dbname=$DATABASE_NAME user=$EMAIL sslmode=require" -c "
-CREATE TABLE semantic_cache (
+CREATE TABLE IF NOT EXISTS semantic_cache (
     id SERIAL PRIMARY KEY,
     query_text TEXT NOT NULL,
     query_embedding vector(1024),  -- Databricks BGE embeddings are 1024-dimensional
@@ -69,11 +68,11 @@ CREATE TABLE semantic_cache (
 );
 
 -- Create index for fast vector similarity search (cosine distance)
-CREATE INDEX semantic_cache_embedding_idx ON semantic_cache
+CREATE INDEX IF NOT EXISTS semantic_cache_embedding_idx ON semantic_cache
 USING ivfflat (query_embedding vector_cosine_ops) WITH (lists = 100);
 
 -- Create index for text search as fallback
-CREATE INDEX semantic_cache_query_text_idx ON semantic_cache USING btree (query_text);
+CREATE INDEX IF NOT EXISTS semantic_cache_query_text_idx ON semantic_cache USING btree (query_text);
 "
 
 # Step 6: Save connection info
@@ -92,5 +91,3 @@ echo "Setup complete!"
 echo ""
 echo "Connection info saved to: lakebase_connection.json"
 echo ""
-echo "To regenerate token (expires after 1 hour), run:"
-echo "databricks postgres generate-database-credential projects/$PROJECT_ID/branches/production/endpoints/primary -p $PROFILE -o json | jq -r '.token'"

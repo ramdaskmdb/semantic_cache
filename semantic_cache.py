@@ -3,6 +3,17 @@ Semantic Cache using Databricks Lakebase with pgvector and Databricks embeddings
 
 This implementation provides a semantic cache that matches queries based on meaning
 rather than exact string matching, using vector embeddings and cosine similarity.
+
+Architecture:
+- Uses Databricks Lakebase (managed PostgreSQL) for persistent storage
+- Leverages pgvector extension for efficient vector similarity search
+- Generates embeddings via Databricks Foundation Model API
+- Automatically handles OAuth token refresh (tokens expire after 1 hour)
+- Supports metadata, hit tracking, and configurable similarity thresholds
+
+The cache uses cosine distance for similarity matching, where 0.0 = identical
+and values closer to 1.0 are less similar. The default threshold of 0.85 works
+well for most use cases.
 """
 
 import json
@@ -41,7 +52,8 @@ class SemanticCache:
 
         Args:
             lakebase_profile: Databricks CLI profile name
-            lakebase_endpoint: Lakebase endpoint name (e.g., primary)
+            lakebase_endpoint: Full Lakebase endpoint path (e.g., projects/PROJECT_ID/branches/BRANCH/endpoints/primary)
+            lakebase_database: Database name (default: semantic_cache_db)
             similarity_threshold: Minimum cosine similarity for cache hit (default: 0.85)
             embedding_model: Databricks embedding model (default: databricks-bge-large-en)
         """
@@ -55,6 +67,16 @@ class SemanticCache:
         self._refresh_lakebase_connection()
 
     def _refresh_lakebase_connection(self):
+        """
+        Refresh Lakebase connection credentials and host information.
+
+        This method:
+        1. Generates a new OAuth token for database authentication
+        2. Retrieves the Lakebase host from the endpoint information
+        3. Fetches the user's email for database authentication
+
+        Tokens expire after 1 hour and are automatically refreshed on connection failure.
+        """
         from databricks.sdk import WorkspaceClient
         w = WorkspaceClient(profile=self.lakebase_profile)
 
@@ -77,7 +99,15 @@ class SemanticCache:
         self.user_email = usert.emails[0].value
 
     def _get_connection(self) -> psycopg2.extensions.connection:
-        """Get a connection to Lakebase."""
+        """
+        Get a connection to Lakebase PostgreSQL.
+
+        Automatically refreshes authentication token if connection fails due to expiration.
+        Uses SSL/TLS for secure connections.
+
+        Returns:
+            Active psycopg2 connection object
+        """
         try:
             return psycopg2.connect(
                 host=self.lakebase_host,
@@ -100,7 +130,15 @@ class SemanticCache:
             )
 
     def _get_embedding(self, text: str) -> List[float]:
-        """Embed a single text using Databricks Foundation Model API."""
+        """
+        Generate embeddings for text using Databricks Foundation Model API.
+
+        Args:
+            text: Input text to embed
+
+        Returns:
+            List of floats representing the embedding vector (1024 dimensions for BGE model)
+        """
         from databricks.sdk import WorkspaceClient
         w = WorkspaceClient(profile=self.lakebase_profile)
         response = w.serving_endpoints.query(
@@ -331,32 +369,35 @@ def create_cache_from_config(config_path: str = "lakebase_connection.json") -> S
     """
     Create a SemanticCache instance from a configuration file.
 
+    The config file should contain:
+    - profile: Databricks CLI profile name
+    - endpoint: Full Lakebase endpoint path (projects/PROJECT_ID/branches/BRANCH/endpoints/primary)
+    - database_name: Database name
+    - similarity_threshold: Minimum cosine similarity for cache hits (0.0-1.0)
+    - embedding_model: Databricks embedding model name
+
     Args:
-        config_path: Path to the JSON configuration file
+        config_path: Path to the JSON configuration file (default: lakebase_connection.json)
 
     Returns:
-        Initialized SemanticCache instance
+        Initialized SemanticCache instance with connection to Lakebase
+
+    Example config file:
+        {
+            "profile": "my-profile",
+            "endpoint": "projects/my-project/branches/production/endpoints/primary",
+            "database_name": "cache_db",
+            "similarity_threshold": 0.85,
+            "embedding_model": "databricks-bge-large-en"
+        }
     """
     with open(config_path) as f:
         config = json.load(f)
 
-    # Get Databricks workspace URL from profile
-    result = subprocess.run(
-        ['databricks', 'auth', 'env', '--profile', config['profile']],
-        capture_output=True, text=True, check=True
-    )
-
-    # Parse environment output to get host and token
-    env_vars = {}
-    for line in result.stdout.strip().split('\n'):
-        if '=' in line:
-            key, value = line.split('=', 1)
-            env_vars[key] = value
-
     return SemanticCache(
         lakebase_profile=config['profile'],
         lakebase_endpoint=config['endpoint'],
-        lakebase_database = config['database_name'],
-        similarity_threshold= config['similarity_threshold'],
+        lakebase_database=config['database_name'],
+        similarity_threshold=config['similarity_threshold'],
         embedding_model=config['embedding_model'],
     )
